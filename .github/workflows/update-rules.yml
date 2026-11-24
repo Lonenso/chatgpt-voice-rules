@@ -1,0 +1,59 @@
+name: Update ChatGPT Voice rules
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/update-rules.yml'
+      - 'scripts/**'
+      - 'tests/**'
+
+permissions: {}
+
+concurrency:
+  group: chatgpt-voice-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Test validation and failure handling
+        run: python3 -m unittest discover -s tests -v
+      - name: Fetch, validate and generate
+        run: python3 scripts/update_rules.py
+      - name: Publish only changed rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -- rules/chatgpt-voice.list
+          if git diff --cached --quiet; then
+            echo 'No rule changes; no commit needed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Update ChatGPT Voice IP rules'
+          git push
+
+  keepalive:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Refresh workflow activity without dummy commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh api --method PUT "repos/$GH_REPO/actions/workflows/update-rules.yml/enable"
